@@ -521,7 +521,7 @@ void gnss_handle_uart_error(UART_HandleTypeDef *huart)
     return;
   }
 
-  if (huart->Instance == USART3)
+  if (huart->Instance == UART7)
   {
     N6_RCV_RxCpltCallback(huart);
     return;
@@ -549,7 +549,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  if (huart->Instance == USART3)
+  if (huart->Instance == UART7)
   {
     N6_RCV_RxCpltCallback(huart);
     return;

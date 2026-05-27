@@ -25,7 +25,7 @@ static void N6_RCV_PushByte(uint8_t byte);
 // 맨 처음 n6관련 초기화 함수
 void N6_RCV_Init(UART_HandleTypeDef *huart)
 {
-    n6_uart = huart; // 여기에 어떤 uart를 연결할지 넣어줌. 드론 통합에서는 USART3_RX(PD9)을 사용
+    n6_uart = huart; // N6 UART handle. Current board uses UART7 with PE8 as swapped RX.
 
     n6_rx_byte = 0;
     n6_line_idx = 0;
@@ -46,7 +46,7 @@ static void N6_RCV_StartReceiveIT(void)
     if (n6_uart != NULL)
     {
         /* N6는 드론 보드로 감지 결과를 보내기만 하므로 RX 하나만 쓴다.
-         * PD9 = USART3_RX 1byte interrupt 방식이라 main loop를 붙잡지 않는다.
+         * PE8 = UART7 swapped RX, using 1byte interrupt so main loop is not blocked.
          */
         (void)HAL_UART_Receive_IT(n6_uart, &n6_rx_byte, 1);
     }
@@ -110,7 +110,7 @@ void N6_RCV_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
     (void)huart;
     (void)size;
     /* 예전 DMA ReceiveToIdle 방식용 hook.
-     * 지금 드론 통합에서는 USART3_RX 1byte interrupt를 쓰므로 여기서는 처리하지 않는다.
+     * Current drone integration uses UART7 1byte interrupt RX, so nothing is handled here.
      */
 }
 

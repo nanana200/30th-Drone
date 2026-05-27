@@ -796,7 +796,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  if (huart->Instance == USART3)
+  if (huart->Instance == UART7)
   {
     (void)HAL_UART_AbortReceive(huart);
     N6_RCV_Init(huart);

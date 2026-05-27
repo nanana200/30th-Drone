@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #define N6_RCV_LINE_BUF_SIZE     64
-#define N6_DET_TIMEOUT_MS        1000
+#define N6_DET_TIMEOUT_MS        3000
 
 void N6_RCV_Init(UART_HandleTypeDef *huart);
 void N6_RCV_RxCpltCallback(UART_HandleTypeDef *huart);
