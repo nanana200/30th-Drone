@@ -438,10 +438,25 @@ static void Debug_SendUart6Telemetry(void)
 
 static void Debug_SendUartSnapshot(void)
 {
-  int roll_rate = (int)(sensor_gyro_x_dps * 100.0f);
+  int gx_tenths = DebugSignScaledTenths(sensor_gyro_x_dps);
+  int gy_tenths = DebugSignScaledTenths(sensor_gyro_y_dps);
+  int gz_tenths = DebugSignScaledTenths(sensor_gyro_z_dps);
+  int roll_tenths = DebugSignScaledTenths(sensor_roll_deg);
+  int pitch_tenths = DebugSignScaledTenths(sensor_pitch_deg);
+  int yaw_tenths = DebugSignScaledTenths(sensor_yaw_deg);
+  float display_voltage = battery_voltage + 0.05f;
+  uint8_t v_int = (uint8_t)display_voltage;
+  uint8_t v_dec = (uint8_t)((display_voltage - v_int) * 10.0f);
 
-  (void)uart1_printf("%c%d.%02d\r\n",
-                     (roll_rate < 0) ? '-' : ' ', DebugAbs(roll_rate) / 100, DebugAbs(roll_rate) % 100);
+  (void)uart1_printf("GX %c%d.%01d  GY %c%d.%01d  GZ %c%d.%01d  "
+                     "BAT %d.%dV %d%%  R %c%d.%01d  P %c%d.%01d  Y %c%d.%01d\r\n",
+                     (gx_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(gx_tenths, 10), DebugAbs(gx_tenths) % 10,
+                     (gy_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(gy_tenths, 10), DebugAbs(gy_tenths) % 10,
+                     (gz_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(gz_tenths, 10), DebugAbs(gz_tenths) % 10,
+                     v_int, v_dec, battery_percent,
+                     (roll_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(roll_tenths, 10), DebugAbs(roll_tenths) % 10,
+                     (pitch_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(pitch_tenths, 10), DebugAbs(pitch_tenths) % 10,
+                     (yaw_tenths < 0) ? '-' : ' ', DebugIntegerPartFromScaled(yaw_tenths, 10), DebugAbs(yaw_tenths) % 10);
 }
 
 static void Debug_UpdateOledSnapshot(void)

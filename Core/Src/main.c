@@ -172,7 +172,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     }
   }
   if (htim->Instance == TIM3) {
-    debug_uart_update_flag = 1U;
     debug_oled_tick_divider++;
 
     if (debug_oled_tick_divider >= 5U) {
@@ -276,15 +275,15 @@ int main(void)
       Error_Handler();
     }
 
-    uart_bridge_set_active(true);
-    debug_set_bridge_mode(1U);
-    gnss_set_bridge_mode(1U);
-
     OLED_Clear();
     OLED_Printf(2, 0, "GNSS Bridge On");
     OLED_Printf(4, 0, "PC: UART1");
     OLED_Printf(5, 0, "GNSS: UART2");
     OLED_Update();
+
+    uart_bridge_set_active(true);
+    debug_set_bridge_mode(1U);
+    gnss_set_bridge_mode(1U);
 
     while (1) {
       uart_bridge_process();
@@ -331,7 +330,7 @@ int main(void)
     sensor_process();
     (void)bno085_process();
     switch_update();
-    //debug_process();
+    debug_process();
     uart_bridge_process();
     if (gnss_read_pvt(&gnss_pvt)) {
       (void)uart1_printf("GNSS fix:%u sv:%u lat:%ld lon:%ld hMSL:%ld hAcc:%lu vAcc:%lu gSpd:%ld\r\n",
@@ -344,9 +343,11 @@ int main(void)
                          gnss_pvt.vertical_accuracy_mm,
                          gnss_pvt.ground_speed_mm_s);
     }
-    if (gnss_read_line(gnss_sentence, sizeof(gnss_sentence))) {
-      (void)uart1_printf("%s\r\n", gnss_sentence);
-    }
+    // GPS 모듈을 UBX(바이너리) 프로토콜 전용으로 설정했으므로,
+    // 바이너리 데이터 내부의 random '$' 문자로 인해 수신되는 가짜 NMEA 문자열 출력 차단
+    // if (gnss_read_line(gnss_sentence, sizeof(gnss_sentence))) {
+    //   (void)uart1_printf("%s\r\n", gnss_sentence);
+    // }
     //if (imuimu == 1) {
     //  (void)uart1_printf("IMU\r\n");
     //}
@@ -357,7 +358,7 @@ int main(void)
       motor_set_rate_targets(0, 0, 0);
       while (1) {
         switch_update();
-        //debug_process();
+        debug_process();
         if (main_flag != 0U) {
           main_flag--;
           sensor_process();

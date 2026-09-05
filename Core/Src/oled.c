@@ -1,4 +1,5 @@
 #include "oled.h"
+#include "debug.h"
 #include "oled_font.h"
 #include "sensor.h"
 
@@ -10,6 +11,8 @@ extern I2C_HandleTypeDef hi2c3;
 
 #define OLED_ADDR 0x78U
 #define OLED_PAGE_COUNT 8U
+#define OLED_TEXT_COLUMNS 16U
+#define OLED_COMMAND_TIMEOUT_MS 20U
 
 typedef enum
 {
@@ -21,6 +24,8 @@ typedef enum
 static uint8_t draw_buffer[1024];
 static uint8_t frame_buffer[1024];
 static uint8_t dma_tx_buffer[160] __attribute__((aligned(32), section(".dma_buffer")));
+static char oled_text_rows[OLED_PAGE_COUNT][OLED_TEXT_COLUMNS + 1U];
+static uint8_t oled_available = 1U;
 static volatile uint8_t oled_dma_busy = 0U;
 volatile uint8_t oled_update_pending = 0U;
 volatile uint8_t oled_dma_page = 0U;
@@ -42,6 +47,8 @@ static void OLED_ExitCritical(uint32_t primask)
 }
 
 static void OLED_Cmd(uint8_t cmd);
+static void OLED_ClearTextRow(uint8_t row, uint8_t col);
+static void OLED_MirrorToUart(void);
 static void OLED_StartDmaFrame(void);
 static void OLED_StartPageCommand(uint8_t page);
 static void OLED_StartPageData(uint8_t page);
@@ -54,11 +61,21 @@ uint8_t OLED_IsBusy(void)
 static void OLED_Cmd(uint8_t cmd)
 {
     uint8_t data[2] = {0x00U, cmd};
-    HAL_I2C_Master_Transmit(&hi2c3, OLED_ADDR, data, 2U, HAL_MAX_DELAY);
+
+    if (oled_available == 0U)
+    {
+        return;
+    }
+
+    if (HAL_I2C_Master_Transmit(&hi2c3, OLED_ADDR, data, 2U, OLED_COMMAND_TIMEOUT_MS) != HAL_OK)
+    {
+        oled_available = 0U;
+    }
 }
 
 void OLED_Init(void)
 {
+    oled_available = 1U;
     HAL_Delay(100);
 
     OLED_Cmd(0xAE);
@@ -99,12 +116,28 @@ void OLED_Init(void)
 
 void OLED_Clear(void)
 {
+    uint8_t row;
+
     memset(draw_buffer, 0, sizeof(draw_buffer));
+    for (row = 0U; row < OLED_PAGE_COUNT; row++)
+    {
+        memset(oled_text_rows[row], ' ', OLED_TEXT_COLUMNS);
+        oled_text_rows[row][OLED_TEXT_COLUMNS] = '\0';
+    }
 }
 
 void OLED_Update(void)
 {
-    uint32_t primask = OLED_EnterCritical();
+    uint32_t primask;
+
+    OLED_MirrorToUart();
+    primask = OLED_EnterCritical();
+
+    if (oled_available == 0U)
+    {
+        OLED_ExitCritical(primask);
+        return;
+    }
 
     if (oled_dma_busy != 0U)
     {
@@ -135,10 +168,34 @@ void OLED_DrawPixel(uint8_t x, uint8_t y, uint8_t color)
     }
 }
 
-void OLED_Print(uint8_t row, uint8_t col, char *str)
+static void OLED_ClearTextRow(uint8_t row, uint8_t col)
+{
+    uint8_t x = (uint8_t)(col * 7U);
+
+    if ((row >= OLED_PAGE_COUNT) || (x >= OLED_WIDTH))
+    {
+        return;
+    }
+
+    memset(&draw_buffer[(uint16_t)row * OLED_WIDTH + x], 0, OLED_WIDTH - x);
+    if (col < OLED_TEXT_COLUMNS)
+    {
+        memset(&oled_text_rows[row][col], ' ', OLED_TEXT_COLUMNS - col);
+    }
+}
+
+void OLED_Print(uint8_t row, uint8_t col, const char *str)
 {
     uint8_t x = (uint8_t)(col * 7U);
     uint8_t y = (uint8_t)(row * 8U);
+    uint8_t text_col = col;
+
+    if ((str == NULL) || (row >= OLED_PAGE_COUNT))
+    {
+        return;
+    }
+
+    OLED_ClearTextRow(row, col);
 
     while (*str != '\0')
     {
@@ -148,6 +205,12 @@ void OLED_Print(uint8_t row, uint8_t col, char *str)
         if ((c < 32) || (c > 127))
         {
             c = '?';
+        }
+
+        if (text_col < OLED_TEXT_COLUMNS)
+        {
+            oled_text_rows[row][text_col] = c;
+            text_col++;
         }
 
         for (i = 0; i < 7; i++)
@@ -179,6 +242,30 @@ void OLED_Printf(uint8_t row, uint8_t col, const char *fmt, ...)
     va_end(args);
 
     OLED_Print(row, col, buf);
+}
+
+static void OLED_MirrorToUart(void)
+{
+    char tx_buffer[160];
+    size_t offset = 0U;
+    uint8_t row;
+
+    offset += (size_t)snprintf(tx_buffer, sizeof(tx_buffer), "[OLED]\r\n");
+    for (row = 0U; row < OLED_PAGE_COUNT; row++)
+    {
+        if ((offset + OLED_TEXT_COLUMNS + 2U) >= sizeof(tx_buffer))
+        {
+            break;
+        }
+
+        memcpy(&tx_buffer[offset], oled_text_rows[row], OLED_TEXT_COLUMNS);
+        offset += OLED_TEXT_COLUMNS;
+        tx_buffer[offset++] = '\r';
+        tx_buffer[offset++] = '\n';
+    }
+    tx_buffer[offset] = '\0';
+
+    (void)uart1_printf("%s", tx_buffer);
 }
 
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
@@ -241,6 +328,7 @@ void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 
     oled_dma_stage = OLED_DMA_IDLE;
     oled_dma_busy = 0U;
+    oled_available = 0U;
 }
 
 static void OLED_StartDmaFrame(void)
@@ -268,6 +356,7 @@ static void OLED_StartPageCommand(uint8_t page)
     {
         oled_dma_stage = OLED_DMA_IDLE;
         oled_dma_busy = 0U;
+        oled_available = 0U;
     }
 }
 
@@ -282,5 +371,6 @@ static void OLED_StartPageData(uint8_t page)
     {
         oled_dma_stage = OLED_DMA_IDLE;
         oled_dma_busy = 0U;
+        oled_available = 0U;
     }
 }

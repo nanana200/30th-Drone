@@ -359,19 +359,46 @@ static HAL_StatusTypeDef gnss_send_drone_config(void)
 static HAL_StatusTypeDef gnss_configure_for_drone(void)
 {
   HAL_StatusTypeDef status;
+  uint8_t retry;
 
+  /* 1. STM32 USART2를 9600 bps로 초기화 */
   (void)gnss_set_uart_baudrate(GNSS_DEFAULT_BAUDRATE);
-  (void)gnss_send_drone_config();
-  HAL_Delay(GNSS_CONFIG_SETTLE_MS);
 
+  /* 1.5. [임시 조치] 꼬인 GPS 수신기 메모리를 공장초기화 상태로 밀어버리는 Cold Start 명령 송신 */
+  uint8_t cold_start_cmd[] = {0xB5U, 0x62U, 0x06U, 0x04U, 0x04U, 0x00U, 0xFFU, 0xFFU, 0x02U, 0x00U, 0x0EU, 0x61U};
+  (void)HAL_UART_Transmit(&huart2, cold_start_cmd, sizeof(cold_start_cmd), GNSS_UART_TIMEOUT_MS);
+  HAL_Delay(2000U); /* GPS 모듈이 메모리를 완벽히 포맷하고 재부팅할 때까지 2초간 대기 */
+
+  /* 2. Overrun 등 기존의 하드웨어 에러 플래그와 RX 레지스터 클리어 */
+  __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF | UART_CLEAR_PEF);
+  volatile uint32_t dummy = huart2.Instance->RDR;
+  (void)dummy;
+
+  /* 3. 9600 bps로 설정 프레임을 여러 번 전송하여 모듈이 일부 유실하더라도 무조건 수신 보장 */
+  for (retry = 0U; retry < 4U; retry++)
+  {
+    (void)gnss_send_drone_config();
+    HAL_Delay(100U);
+  }
+
+  /* 4. STM32 USART2를 115200 bps로 변경 */
   status = gnss_set_uart_baudrate(GNSS_DRONE_BAUDRATE);
   if (status != HAL_OK)
   {
     return status;
   }
 
-  status = gnss_send_drone_config();
-  HAL_Delay(GNSS_CONFIG_SETTLE_MS);
+  /* 5. 115200 bps에서도 에러 플래그 및 레지스터 정리 */
+  __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF | UART_CLEAR_PEF);
+  dummy = huart2.Instance->RDR;
+  (void)dummy;
+
+  /* 6. 115200 bps로 설정을 여러 번 재전송하여 설정을 확실히 적용 */
+  for (retry = 0U; retry < 3U; retry++)
+  {
+    status = gnss_send_drone_config();
+    HAL_Delay(100U);
+  }
 
   return status;
 }
@@ -408,7 +435,10 @@ HAL_StatusTypeDef gnss_init(void)
 {
   HAL_StatusTypeDef status;
 
-  HAL_GPIO_WritePin(UART2_RESET_GPIO_Port, UART2_RESET_Pin, GPIO_PIN_SET);
+  /* 하드웨어 리셋 수행 및 부팅 완료 충분히 대기 (2초) */
+  gnss_reset();
+  HAL_Delay(2000U);
+
   gnss_reset_line_state();
   gnss_reset_ubx_state();
   gnss_sentence_ready = 0U;
@@ -422,13 +452,19 @@ HAL_StatusTypeDef gnss_init(void)
     return status;
   }
 
+  /* 인터럽트 시작하기 직전에 다시 한 번 에러 플래그와 RX 레지스터 완벽히 비우기 */
+  __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF | UART_CLEAR_PEF);
+  volatile uint32_t dummy = huart2.Instance->RDR;
+  (void)dummy;
+
   return gnss_start_receive_it();
 }
 
 void gnss_reset(void)
 {
+  /* u-blox 가이드 기준 RESET_N은 최소 100ms 동안 LOW로 유지해야 깔끔한 리셋 보장 */
   HAL_GPIO_WritePin(UART2_RESET_GPIO_Port, UART2_RESET_Pin, GPIO_PIN_RESET);
-  HAL_Delay(GNSS_RESET_PULSE_MS);
+  HAL_Delay(100U);
   HAL_GPIO_WritePin(UART2_RESET_GPIO_Port, UART2_RESET_Pin, GPIO_PIN_SET);
 }
 
