@@ -1,4 +1,6 @@
 build
+Debug/
+Release/
 mx.scratch
 !.settings
 .vscode/

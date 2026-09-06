@@ -27,6 +27,7 @@
 #include "motor.h"
 #include "oled.h"
 #include "sensor.h"
+#include "uav_link.h"
 #include "stm32h7xx_hal_gpio.h"
 #include "switch.h"
 #include "uart_bridge.h"
@@ -90,9 +91,9 @@ int8_t battery_percent = 0;
 uint32_t last_battery_check_time = 0;
 
 uint32_t user_step_throttle_compare = 1000U;
-static char gnss_sentence[128];
 static gnss_pvt_t gnss_pvt;
 static uint8_t user_gnss_bridge_mode = 0U;
+static uint8_t user_gps_lora_test_mode = 0U;
 
 /* USER CODE END PV */
 
@@ -121,6 +122,54 @@ static void MX_USART6_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static uint32_t gps_coordinate_magnitude(int32_t coordinate)
+{
+  return (coordinate < 0) ? (uint32_t)(-(int64_t)coordinate) : (uint32_t)coordinate;
+}
+
+static void gps_lora_test_log_pvt(const gnss_pvt_t *pvt)
+{
+  static uint32_t last_log_ms;
+  static uint8_t last_valid = 0xFFU;
+  uint8_t valid;
+  uint32_t now;
+  uint32_t lat;
+  uint32_t lon;
+
+  if (pvt == NULL)
+  {
+    return;
+  }
+
+  valid = ((pvt->fix_ok != 0U) && (pvt->fix_type >= 2U)) ? 1U : 0U;
+  now = HAL_GetTick();
+  if ((valid == last_valid) && ((now - last_log_ms) < 2000U))
+  {
+    return;
+  }
+
+  last_valid = valid;
+  last_log_ms = now;
+  if (valid == 0U)
+  {
+    (void)uart1_printf("[GPS] NO FIX type=%u satellites=%u\r\n",
+                       pvt->fix_type, pvt->satellites_used);
+    return;
+  }
+
+  lat = gps_coordinate_magnitude(pvt->latitude_deg_1e7);
+  lon = gps_coordinate_magnitude(pvt->longitude_deg_1e7);
+  (void)uart1_printf("[GPS] FIX VALID type=%u satellites=%u\r\n",
+                     pvt->fix_type, pvt->satellites_used);
+  (void)uart1_printf("[GPS] LAT=%s%lu.%07lu LON=%s%lu.%07lu\r\n",
+                     (pvt->latitude_deg_1e7 < 0) ? "-" : "",
+                     (unsigned long)(lat / 10000000U),
+                     (unsigned long)(lat % 10000000U),
+                     (pvt->longitude_deg_1e7 < 0) ? "-" : "",
+                     (unsigned long)(lon / 10000000U),
+                     (unsigned long)(lon % 10000000U));
+}
 
 void Battery_Process(void) {
   if (HAL_GetTick() - last_battery_check_time >= 50) {
@@ -241,7 +290,8 @@ int main(void)
   OLED_Init();
   OLED_Clear();
   OLED_Printf(2, 0, "System Start!");
-  OLED_Printf(4, 0, "UP:Start RT:GNSS");
+  OLED_Printf(4, 0, "UP:FLY RT:BRIDGE");
+  OLED_Printf(6, 0, "LT:GPS+LoRa TEST");
   OLED_Update();
   while (1) {
     switch_update();
@@ -260,8 +310,53 @@ int main(void)
       OLED_Update();
       break;
     }
+
+    if (sw_l_flag == 1U) {
+      user_gps_lora_test_mode = 1U;
+      OLED_Clear();
+      OLED_Printf(2, 0, "GPS + LoRa TEST");
+      OLED_Printf(5, 0, "Starting...");
+      OLED_Update();
+      break;
+    }
   }
   HAL_Delay(2000);
+
+  if (user_gps_lora_test_mode != 0U) {
+    uint8_t lora_ready = 0U;
+
+    switch_init();
+    debug_init();
+    (void)uart1_printf("\r\n[UAV] GPS + LoRa TEST START\r\n");
+    if (gnss_init() == HAL_OK) {
+      (void)uart1_printf("[GPS] UART initialized: USART2 115200, interrupt RX\r\n");
+    } else {
+      (void)uart1_printf("[GPS] UART INIT ERROR\r\n");
+    }
+
+    if (uav_link_init() == HAL_OK) {
+      lora_ready = 1U;
+      OLED_Clear();
+      OLED_Printf(2, 0, "GPS + LoRa TEST");
+      OLED_Printf(4, 0, "LoRa RX READY");
+      OLED_Update();
+    } else {
+      OLED_Clear();
+      OLED_Printf(2, 0, "GPS + LoRa TEST");
+      OLED_Printf(4, 0, "LoRa INIT ERROR");
+      OLED_Update();
+    }
+
+    while (1) {
+      if (gnss_read_pvt(&gnss_pvt)) {
+        uav_link_update_gnss(&gnss_pvt);
+        gps_lora_test_log_pvt(&gnss_pvt);
+      }
+      if (lora_ready != 0U) {
+        uav_link_process();
+      }
+    }
+  }
 
   if (user_gnss_bridge_mode != 0U) {
     switch_init();
@@ -333,15 +428,17 @@ int main(void)
     debug_process();
     uart_bridge_process();
     if (gnss_read_pvt(&gnss_pvt)) {
-      (void)uart1_printf("GNSS fix:%u sv:%u lat:%ld lon:%ld hMSL:%ld hAcc:%lu vAcc:%lu gSpd:%ld\r\n",
+      (void)uart1_printf("[GPS] FIX=%u OK=%u SV=%u hMSL=%ld hAcc=%lu vAcc=%lu gSpd=%ld\r\n",
                          gnss_pvt.fix_type,
+                         gnss_pvt.fix_ok,
                          gnss_pvt.satellites_used,
-                         gnss_pvt.latitude_deg_1e7,
-                         gnss_pvt.longitude_deg_1e7,
                          gnss_pvt.height_msl_mm,
                          gnss_pvt.horizontal_accuracy_mm,
                          gnss_pvt.vertical_accuracy_mm,
                          gnss_pvt.ground_speed_mm_s);
+      (void)uart1_printf("[GPS] LAT=%ld\r\n[GPS] LON=%ld\r\n",
+                         gnss_pvt.latitude_deg_1e7,
+                         gnss_pvt.longitude_deg_1e7);
     }
     // GPS 모듈을 UBX(바이너리) 프로토콜 전용으로 설정했으므로,
     // 바이너리 데이터 내부의 random '$' 문자로 인해 수신되는 가짜 NMEA 문자열 출력 차단
@@ -770,16 +867,16 @@ static void MX_SPI4_Init(void)
   hspi4.Instance = SPI4;
   hspi4.Init.Mode = SPI_MODE_MASTER;
   hspi4.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi4.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi4.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi4.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi4.Init.NSS = SPI_NSS_SOFT;
-  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
   hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi4.Init.CRCPolynomial = 0x0;
-  hspi4.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi4.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   hspi4.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
   hspi4.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
   hspi4.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
@@ -1231,7 +1328,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SPI4_CS_GPIO_Port, SPI4_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, SPI4_RESET_Pin|SPI1_RESET_Pin|GPIO_PIN_8, GPIO_PIN_RESET);

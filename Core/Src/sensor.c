@@ -1,4 +1,5 @@
 #include "sensor.h"
+#include "lora.h"
 
 #include "debug.h"
 
@@ -620,5 +621,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       motion_read_error = 1U;
       imuimu=1;
     }
+  }
+  else if (GPIO_Pin == SPI4_INT_Pin)
+  {
+    lora_dio0_callback(GPIO_Pin);
   }
 }
