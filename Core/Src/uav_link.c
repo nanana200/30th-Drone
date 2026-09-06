@@ -430,7 +430,7 @@ HAL_StatusTypeDef uav_link_init(void)
   pending_tx_length = 0U;
   last_rx_debug_log_ms = 0U;
 
-  (void)uart1_printf("[LORA] SPI initialized: SPI4 mode0 8-bit 1.875MHz\r\n");
+  (void)uart1_printf("[LORA] SPI initialized: SPI4 mode0 8-bit 7.5MHz\r\n");
   if (lora_init() != HAL_OK)
   {
     (void)uart1_printf("[LORA] SX127x INIT ERROR (SPI/version)\r\n");

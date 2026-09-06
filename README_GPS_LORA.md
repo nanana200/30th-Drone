@@ -22,7 +22,7 @@ but it does not fly them autonomously.
 | LoRa RESET | PC13 |
 | Debug UART | existing USART1 setup |
 
-SPI4 is mode 0, 8-bit, prescaler 64 (1.875 Mbit/s). Radio settings are 922.1 MHz,
+SPI4 is mode 0, 8-bit, prescaler 16 (7.5 Mbit/s). Radio settings are 922.1 MHz,
 BW 125 kHz, coding rate 4/5, spreading factor 7, explicit header, payload CRC,
 8-symbol preamble, sync word `0x12`, PA_BOOST 17 dBm, and OCP 140 mA.
 

@@ -12,7 +12,7 @@ STM32H753 기반 UAV용 GPS + SX127x LoRa 통신 실험 펌웨어입니다.
 - GCS의 UAV POLL 요청에 대한 GPS 좌표 응답
 - UAV waypoint 수신 및 ACK 전송
 - 수신 CRC, 패킷 길이, 목적지 및 SPI/FIFO 진단 로그
-- LoRa SPI4 속도 1.875 MHz 및 단일 CS 트랜잭션 기반 레지스터/FIFO 접근
+- LoRa SPI4 속도 7.5 MHz 및 단일 CS 트랜잭션 기반 레지스터/FIFO 접근
 - 송신 완료 후 RX Continuous 자동 복귀
 
 하드웨어 연결, 패킷 형식 및 벤치 테스트 방법은
